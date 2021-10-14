@@ -85,6 +85,8 @@ class AutoRebalanceEnv(gym.Env):
         #                                  dtype=np.float32, num_commodities=self.n_actions, state=self.TARGET_RATIO)
         self.action_space = spaces.Box(low=self.CUMSUM_TARGET-.05, high=self.CUMSUM_TARGET+.05,
                                        shape=(self.n_actions-1, ), dtype=np.float32)
+        # self.action_space = spaces.Box(low=0, high=1,
+        #                                shape=(self.n_actions - 1,), dtype=np.float32)
         self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions, ), dtype=np.float32)
 
     def step(self, action: np.ndarray):
@@ -93,23 +95,23 @@ class AutoRebalanceEnv(gym.Env):
         action = np.diff(next_state) - self.current_weight
         if np.sum(np.abs(action)) >= .01:
             self.n_rebalance += 1
+            self._apply_action(action)
         self.current_tick += 1
         self.done = self.current_tick == self.last_tick
 
         trading_cost = self._get_trading_cost(action)
-        self._apply_action(action)
+
         if not self.done:
             self.current_return = self.current_weight @ (self.daily_growth[self.current_tick - 1] + 1)
-            self.growth_rate *= (self.current_return - trading_cost)
+            self.growth_rate *= self.current_return
             self._update_current_weight()
 
         utility_error = self._get_trace_error()
-        # reward = - (trading_cost + trace_error)  # + (self.growth_rate - 1) # No.1 reward
         observation = self.TARGET_RATIO - self.current_weight
         trace_error = np.sum(np.abs(observation))
-        reward = - (trace_error + trading_cost*self.growth_rate) + self.current_return
+        reward = - (trace_error + trading_cost) + self.current_return
 
-        self.total_cost += trading_cost*self.growth_rate
+        self.total_cost += trading_cost
         self.total_error += trace_error
         self.total_utility_error += utility_error
 
@@ -150,6 +152,7 @@ class AutoRebalanceEnv(gym.Env):
         self.total_utility_error = 0
         # self.action_space.reset(state=self.TARGET_RATIO)
         observation = self.TARGET_RATIO - self.current_weight
+
         return observation
 
     def render(self, mode='human'):
