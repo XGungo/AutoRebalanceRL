@@ -2,6 +2,7 @@ import gym
 import pandas as pd
 from gym import spaces
 import numpy as np
+import scipy as sp
 import matplotlib.pyplot as plt
 import util
 
@@ -44,7 +45,7 @@ class AutoRebalanceEnv(gym.Env):
     """Custom Environment that follows gym interface"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, alpha, stock_price: pd.DataFrame, target_ratio: np.ndarray, len_period: int = 500, mode='test'):
+    def __init__(self, alpha, stock_price: pd.DataFrame, target_ratio: np.ndarray, len_period: int = 500, mode='train', start_tick=0):
         super(AutoRebalanceEnv, self).__init__()
 
         # constant
@@ -60,12 +61,13 @@ class AutoRebalanceEnv(gym.Env):
         self.TARGET_RATIO = target_ratio
         self.CUMSUM_TARGET = np.cumsum(self.TARGET_RATIO)[:-1]
         self.daily_growth = util.daily_growth(self.stock_price)
-        self.cov = np.cov(self.daily_growth.T)
-        self.mu = util.expected_mean_return(self.stock_price)*self.LEN_OF_PERIOD
+        self.cov = np.cov(self.daily_growth.T)*256
+        self.mu = util.expected_mean_return(self.stock_price)*256
 
         # step variable
         self.done = False
-        self.start_tick = np.random.choice(len(self.stock_price) - self.LEN_OF_PERIOD) if self.MODE == 'train' else 0
+        self.start_tick = np.random.choice(range(256, len(self.stock_price) - self.LEN_OF_PERIOD)) if self.MODE == 'train' else start_tick
+        print(self.start_tick)
         self.current_tick = self.start_tick
         self.last_tick = self.current_tick + self.LEN_OF_PERIOD - 1
 
@@ -87,7 +89,7 @@ class AutoRebalanceEnv(gym.Env):
                                        shape=(self.n_actions-1, ), dtype=np.float32)
         # self.action_space = spaces.Box(low=0, high=1,
         #                                shape=(self.n_actions - 1,), dtype=np.float32)
-        self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions, ), dtype=np.float32)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions*2, 1), dtype=np.float32)
 
     def step(self, action: np.ndarray):
         next_state = np.linspace(0, 1, self.n_actions+1)
@@ -105,11 +107,14 @@ class AutoRebalanceEnv(gym.Env):
             self.current_return = self.current_weight @ (self.daily_growth[self.current_tick - 1] + 1)
             self.growth_rate *= self.current_return
             self._update_current_weight()
-
+        self.update_target()
+        self.CUMSUM_TARGET = np.cumsum(self.TARGET_RATIO)[:-1]
+        self.action_space = spaces.Box(low=self.CUMSUM_TARGET-.05, high=self.CUMSUM_TARGET+.05,
+                                       shape=(self.n_actions-1, ), dtype=np.float32)
         utility_error = self._get_trace_error()
-        observation = self.TARGET_RATIO - self.current_weight
+        observation = np.array([self.current_weight, self.TARGET_RATIO]).reshape(-1, 1)
         trace_error = np.sum(np.abs(observation))
-        reward = - (trace_error + trading_cost) + self.current_return
+        reward = - (utility_error + trading_cost) + self.current_return
 
         self.total_cost += trading_cost
         self.total_error += trace_error
@@ -138,10 +143,14 @@ class AutoRebalanceEnv(gym.Env):
         self.done = False
         self.n_train += 1
         self.n_rebalance = 0
-        if self.n_train % self.TIME_TO_RESAMPLE == 0:
-            self.start_tick = np.random.choice(len(self.stock_price) - self.LEN_OF_PERIOD) if self.MODE == 'train' else 0
+        if self.n_train % self.TIME_TO_RESAMPLE == 0 and self.MODE == 'train':
+            self.start_tick = np.random.choice(range(256, len(self.stock_price) - self.LEN_OF_PERIOD))
         self.current_tick = self.start_tick
         self.last_tick = self.current_tick + self.LEN_OF_PERIOD - 1
+        self.update_target()
+        self.CUMSUM_TARGET = np.cumsum(self.TARGET_RATIO)[:-1]
+        self.action_space = spaces.Box(low=self.CUMSUM_TARGET-.05, high=self.CUMSUM_TARGET+.05,
+                                       shape=(self.n_actions-1, ), dtype=np.float32)
         self.current_weight = self.TARGET_RATIO
         self.current_return = 1.
         self.growth_rate = 1.
@@ -151,7 +160,7 @@ class AutoRebalanceEnv(gym.Env):
         self.total_error = 0
         self.total_utility_error = 0
         # self.action_space.reset(state=self.TARGET_RATIO)
-        observation = self.TARGET_RATIO - self.current_weight
+        observation = np.array([self.current_weight, self.TARGET_RATIO]).reshape(-1, 1)
 
         return observation
 
@@ -190,13 +199,20 @@ class AutoRebalanceEnv(gym.Env):
         tc *= self.growth_rate
         return tc
 
-    @staticmethod
-    def utility(weights, mu, cov, alpha):
-        return np.dot(mu, weights) - 0.5 * alpha * np.dot(weights.T, np.dot(cov, weights))
+    def utility(self, weights):
+        return weights.T@self.mu - 0.5 * self.ALPHA * weights.T @ self.cov @ weights
+
+    def update_target(self):
+        self.mu = np.mean(self.daily_growth[self.current_tick-512:self.current_tick], axis=0)*256
+        self.cov = np.cov(self.daily_growth[self.current_tick-512:self.current_tick].T)*256
+        x0 = np.ones(self.n_actions) / self.n_actions
+        cons = ({'type': 'eq', 'fun': lambda x: x.sum() - 1.0})
+        bnds = [(0, 1)] * self.n_actions
+        self.TARGET_RATIO = sp.optimize.minimize(self.utility, x0, method='SLSQP', bounds=bnds, constraints=cons)['x']
 
     def _get_trace_error(self):
-        return AutoRebalanceEnv.utility(self.TARGET_RATIO, self.mu, self.cov, self.ALPHA) - \
-               AutoRebalanceEnv.utility(self.current_weight, self.mu, self.cov, self.ALPHA)
+        return self.utility(self.TARGET_RATIO) - \
+               self.utility(self.current_weight)
 
     def _update_history(self, info):
         if not self.history:
@@ -211,7 +227,7 @@ class AutoRebalanceEnv(gym.Env):
 
 if __name__ == '__main__':
 
-    df = pd.read_csv('2000_2019_daily_data.csv')[['H0A0 Index', 'NKY Index', 'SENSEX Index', 'SPX Index']].to_numpy()
+    df = pd.read_csv('data/2000_2019_daily_data.csv')[['H0A0 Index', 'NKY Index', 'SENSEX Index', 'SPX Index']].to_numpy()
     env = AutoRebalanceEnv(stock_price=df, target_ratio=np.array([.13, .14, .17, .56]))
     observation = env.reset()
 
