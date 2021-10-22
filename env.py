@@ -2,79 +2,52 @@ import gym
 import pandas as pd
 from gym import spaces
 import numpy as np
-import scipy as sp
 import matplotlib.pyplot as plt
 import util
-
-
-class RebalanceBox(spaces.Box):
-    def __init__(self, low, high, shape, dtype, num_commodities, state):
-        super(RebalanceBox, self).__init__(low, high, shape, dtype)
-        self.low = low
-        self.high = high
-        self.shape = shape
-        self.dtype = dtype
-        self.num_commodities = num_commodities
-        self.current_state = state
-        self.delta = .02
-        self.update_rate = .99
-
-    def reset(self, state, delta=.1) -> None:
-        self.current_state = state
-        self.delta = delta
-
-    def update(self, state: np.ndarray) -> None:
-        self.current_state = state
-
-    # def sample(self) -> np.ndarray:
-    #     accumulated_state = np.cumsum(self.current_state)
-    #     accumulated_state[:-1] += np.random.normal(0, self.delta, len(accumulated_state) - 1)
-    #     accumulated_state = np.insert(accumulated_state, 0, 0)
-    #     accumulated_state = np.diff(accumulated_state) - self.current_state.flatten()
-    #     self.delta *= self.update_rate
-    #     return accumulated_state.reshape(self.shape)
-
-    def sample(self) -> np.ndarray:
-        accumulated_new_state = np.linspace(0, 1, self.num_commodities + 1)
-        accumulated_new_state[1:-1] = np.sort(np.random.uniform(0, 1, self.num_commodities - 1))
-        new_state = np.diff(accumulated_new_state)
-        return new_state - self.current_state
 
 
 class AutoRebalanceEnv(gym.Env):
     """Custom Environment that follows gym interface"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, alpha, stock_price: pd.DataFrame, target_ratio: np.ndarray, len_period: int = 500, mode='train', start_tick=0):
+    def __init__(self, stock_price: pd.DataFrame, targets, means, covs, re_target, alpha=1, len_period: int = 500, mode='train', start_tick=0):
         super(AutoRebalanceEnv, self).__init__()
 
         # constant
         self.MODE = mode
         self.SELL_COST = .004415
         self.BUY_COST = .001425
-        self.n_train = 0
-        self.n_rebalance = 0
         self.TIME_TO_RESAMPLE = 10
         self.LEN_OF_PERIOD = len_period
         self.ALPHA = alpha
         self.stock_price = stock_price
-        self.TARGET_RATIO = target_ratio
-        self.CUMSUM_TARGET = np.cumsum(self.TARGET_RATIO)[:-1]
+        self.targets = targets
+        self.means = means
+        self.covs = covs
+        self.mu = None
+        self.cov = None
+        self.target_ratio = None
+        self.cum_target = None
+        self.re_target = re_target
         self.daily_growth = util.daily_growth(self.stock_price)
-        self.cov = np.cov(self.daily_growth.T)*256
-        self.mu = util.expected_mean_return(self.stock_price)*256
 
         # step variable
         self.done = False
-        self.start_tick = np.random.choice(range(256, len(self.stock_price) - self.LEN_OF_PERIOD)) if self.MODE == 'train' else start_tick
-        print(self.start_tick)
+        if self.MODE == 'train':
+            self.start_tick = np.random.choice(range(len(self.stock_price) - self.LEN_OF_PERIOD))
+        else:
+            self.start_tick = 0
         self.current_tick = self.start_tick
         self.last_tick = self.current_tick + self.LEN_OF_PERIOD - 1
+        self.target_ratio = self.targets[self.current_tick]
+        self.cum_target = np.cumsum(self.target_ratio)[:-1]
 
-        self.current_weight = self.TARGET_RATIO
+        self.current_weight = self.target_ratio
         self.current_return = 1.
         self.growth_rate = 1.
-
+        self.n_train = 0
+        self.n_rebalance = 0
+        self.n_step = 0
         self.total_cost = 0
         self.total_error = 0
         self.total_utility_error = 0
@@ -82,14 +55,11 @@ class AutoRebalanceEnv(gym.Env):
         self.history = None
 
         # action and observation space
-        self.n_actions = stock_price.shape[1]
-        # self.action_space = RebalanceBox(low=0, high=1, shape=(self.n_actions, ),
-        #                                  dtype=np.float32, num_commodities=self.n_actions, state=self.TARGET_RATIO)
-        self.action_space = spaces.Box(low=self.CUMSUM_TARGET-.05, high=self.CUMSUM_TARGET+.05,
+        self.n_actions = self.stock_price.shape[1]
+        self.action_space = spaces.Box(low=self.cum_target-.05, high=self.cum_target+.05,
                                        shape=(self.n_actions-1, ), dtype=np.float32)
-        # self.action_space = spaces.Box(low=0, high=1,
-        #                                shape=(self.n_actions - 1,), dtype=np.float32)
         self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions*2, 1), dtype=np.float32)
+
 
     def step(self, action: np.ndarray):
         next_state = np.linspace(0, 1, self.n_actions+1)
@@ -107,12 +77,12 @@ class AutoRebalanceEnv(gym.Env):
             self.current_return = self.current_weight @ (self.daily_growth[self.current_tick - 1] + 1)
             self.growth_rate *= self.current_return
             self._update_current_weight()
+
+        self.n_step += 1
         self.update_target()
-        self.CUMSUM_TARGET = np.cumsum(self.TARGET_RATIO)[:-1]
-        self.action_space = spaces.Box(low=self.CUMSUM_TARGET-.05, high=self.CUMSUM_TARGET+.05,
-                                       shape=(self.n_actions-1, ), dtype=np.float32)
+
         utility_error = self._get_trace_error()
-        observation = np.array([self.current_weight, self.TARGET_RATIO]).reshape(-1, 1)
+        observation = np.array([self.current_weight, self.target_ratio]).reshape(-1, 1)
         trace_error = np.sum(np.abs(observation))
         reward = - (utility_error + trading_cost) + self.current_return
 
@@ -143,15 +113,15 @@ class AutoRebalanceEnv(gym.Env):
         self.done = False
         self.n_train += 1
         self.n_rebalance = 0
-        if self.n_train % self.TIME_TO_RESAMPLE == 0 and self.MODE == 'train':
-            self.start_tick = np.random.choice(range(256, len(self.stock_price) - self.LEN_OF_PERIOD))
+        self.n_step = 0
+        if self.MODE == 'train':
+            self.start_tick = np.random.choice(range(len(self.stock_price) - self.LEN_OF_PERIOD))
+        else:
+            self.start_tick = 0
         self.current_tick = self.start_tick
         self.last_tick = self.current_tick + self.LEN_OF_PERIOD - 1
         self.update_target()
-        self.CUMSUM_TARGET = np.cumsum(self.TARGET_RATIO)[:-1]
-        self.action_space = spaces.Box(low=self.CUMSUM_TARGET-.05, high=self.CUMSUM_TARGET+.05,
-                                       shape=(self.n_actions-1, ), dtype=np.float32)
-        self.current_weight = self.TARGET_RATIO
+        self.current_weight = self.target_ratio
         self.current_return = 1.
         self.growth_rate = 1.
         self.history = None
@@ -159,8 +129,8 @@ class AutoRebalanceEnv(gym.Env):
         self.total_cost = 0
         self.total_error = 0
         self.total_utility_error = 0
-        # self.action_space.reset(state=self.TARGET_RATIO)
-        observation = np.array([self.current_weight, self.TARGET_RATIO]).reshape(-1, 1)
+        # self.action_space.reset(state=self.target_ratio)
+        observation = np.array([self.current_weight, self.target_ratio]).reshape(-1, 1)
 
         return observation
 
@@ -199,19 +169,21 @@ class AutoRebalanceEnv(gym.Env):
         tc *= self.growth_rate
         return tc
 
-    def utility(self, weights):
-        return weights.T@self.mu - 0.5 * self.ALPHA * weights.T @ self.cov @ weights
 
     def update_target(self):
-        self.mu = np.mean(self.daily_growth[self.current_tick-512:self.current_tick], axis=0)*256
-        self.cov = np.cov(self.daily_growth[self.current_tick-512:self.current_tick].T)*256
-        x0 = np.ones(self.n_actions) / self.n_actions
-        cons = ({'type': 'eq', 'fun': lambda x: x.sum() - 1.0})
-        bnds = [(0, 1)] * self.n_actions
-        self.TARGET_RATIO = sp.optimize.minimize(self.utility, x0, method='SLSQP', bounds=bnds, constraints=cons)['x']
+        if self.n_step % self.re_target == 0:
+            self.target_ratio = self.targets[self.current_tick]
+            self.cum_target = np.cumsum(self.target_ratio)[:-1]
+            self.action_space = spaces.Box(low=self.cum_target-.05, high=self.cum_target+.05,
+                                           shape=(self.n_actions-1, ), dtype=np.float32)
+
+    def utility(self, weights):
+        self.mu = self.means[self.current_tick]
+        self.cov = self.covs[self.current_tick]
+        return weights.T @ self.mu - 0.5 * self.ALPHA * weights.T @ self.cov @ weights
 
     def _get_trace_error(self):
-        return self.utility(self.TARGET_RATIO) - \
+        return self.utility(self.target_ratio) - \
                self.utility(self.current_weight)
 
     def _update_history(self, info):
@@ -227,7 +199,7 @@ class AutoRebalanceEnv(gym.Env):
 
 if __name__ == '__main__':
 
-    df = pd.read_csv('data/2000_2019_daily_data.csv')[['H0A0 Index', 'NKY Index', 'SENSEX Index', 'SPX Index']].to_numpy()
+    df = pd.read_csv('raw data/2000_2019_daily_data.csv')[['H0A0 Index', 'NKY Index', 'SENSEX Index', 'SPX Index']].to_numpy()
     env = AutoRebalanceEnv(stock_price=df, target_ratio=np.array([.13, .14, .17, .56]))
     observation = env.reset()
 

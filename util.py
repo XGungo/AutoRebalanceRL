@@ -145,31 +145,31 @@ class Convex:
 
 
 if __name__ == '__main__':
-    test_df = pd.read_csv('data/2010_2019_daily_data.csv')
+    test_df = pd.read_csv('raw data/2010_2019_daily_data.csv')
     target = np.array([.4405, .2694, .1375, .1526])
     test_df = test_df[['SPX Index', 'SHCOMP Index', 'SENSEX Index', 'MXLA Index']].to_numpy()
-    test_df = test_df[1828:]
-    Dates = pd.read_csv('data/2010_2019_daily_data.csv')['Dates']
-    start_day = Dates[1828]
+    test_df = test_df[512:]
+    Dates = pd.read_csv('raw data/2010_2019_daily_data.csv')['Dates']
+    start_day = Dates[512]
     end_day = Dates[len(Dates)-1]
 
     daily_growth = daily_growth(test_df)
 
-    # for tol_rate in range(5):
-    #     tol_rate = .01 * (tol_rate + 1)
-    #     growth, cost, count = tolerance(target, daily_growth, tol_rate)
-    #     with open('results.csv', 'a') as f:
-    #         f.write(f'tolerance{tol_rate*100}%, {growth[-1]*100:.2f}, {sharpe_ratio(growth):.4f}, {cost*100:.2f}, {count}, {start_day}, {end_day}\n')
-    #     # np.savetxt(f'tolerance_{tol_rate*100}%_return-{growth[-1]*100:.2f}_sharpe-{sharpe_ratio(growth):.4f}_cost-{cost*100:.2f}%_count-{count}_len-{len(test_df)}.csv', growth)
-    #
-    # for period in [1, 2, 3, 4, 5, 6, 9, 12]:
-    #     growth, cost, count = PR(target, daily_growth, period)
-    #     with open('results.csv', 'a') as f:
-    #         f.write(f'PR({period}), {growth[-1]*100:.2f}, {sharpe_ratio(growth):.4f}, {cost*100:.2f}, {count}, {start_day}, {end_day}\n')
-    #     # np.savetxt(f'PR({period})_return-{growth[-1]*100:.2f}_sharpe-{sharpe_ratio(growth):.4f}_cost-{cost*100:.2f}%_count-{count}_len-{len(test_df)}.csv', growth)
-    # growth = get_buy_n_hold_return(target, daily_growth, len(test_df))
-    # with open('results.csv', 'a') as f:
-    #     f.write(f'Buy and Hold, {growth[-1] * 100:.2f}, {sharpe_ratio(growth):.4f}, {0}, {1}, {start_day}, {end_day}\n')
-    # # np.savetxt(f'BH_return-{growth[-1] * 100:.2f}_sharpe-{sharpe_ratio(growth):.4f}_len-{len(test_df)}.csv', growth)
-    portfolio = Portolio(mu=np.mean(daily_growth, axis=0), cov=np.cov(daily_growth.T))
+    for tol_rate in range(5):
+        tol_rate = .01 * (tol_rate + 1)
+        growth, cost, count = tolerance(target, daily_growth, tol_rate)
+        with open('results.csv', 'a') as f:
+            f.write(f'tolerance{tol_rate*100}%, {growth[-1]*100:.2f}, {sharpe_ratio(growth):.4f}, {cost*100:.2f}, {count}, {start_day}, {end_day}\n')
+        # np.savetxt(f'tolerance_{tol_rate*100}%_return-{growth[-1]*100:.2f}_sharpe-{sharpe_ratio(growth):.4f}_cost-{cost*100:.2f}%_count-{count}_len-{len(test_df)}.csv', growth)
+
+    for period in [1, 2, 3, 4, 5, 6, 9, 12]:
+        growth, cost, count = PR(target, daily_growth, period)
+        with open('results.csv', 'a') as f:
+            f.write(f'PR({period}), {growth[-1]*100:.2f}, {sharpe_ratio(growth):.4f}, {cost*100:.2f}, {count}, {start_day}, {end_day}\n')
+        # np.savetxt(f'PR({period})_return-{growth[-1]*100:.2f}_sharpe-{sharpe_ratio(growth):.4f}_cost-{cost*100:.2f}%_count-{count}_len-{len(test_df)}.csv', growth)
+    growth = get_buy_n_hold_return(target, daily_growth, len(test_df))
+    with open('results.csv', 'a') as f:
+        f.write(f'Buy and Hold, {growth[-1] * 100:.2f}, {sharpe_ratio(growth):.4f}, {0}, {1}, {start_day}, {end_day}\n')
+    # np.savetxt(f'BH_return-{growth[-1] * 100:.2f}_sharpe-{sharpe_ratio(growth):.4f}_len-{len(test_df)}.csv', growth)
+    # portfolio = Portolio(mu=np.mean(daily_growth, axis=0), cov=np.cov(daily_growth.T))
     # convex = Convex(mu=np.mean(daily_growth, axis=0), cov=np.cov(daily_growth.T))
