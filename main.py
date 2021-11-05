@@ -15,15 +15,17 @@ import util
 # Press the green button in the gutter to run the script.
 if __name__ == '__main__':
     try:
-        re_target = int(sys.argv[1])
+        start_day = sys.argv[1]
+        end_day = sys.argv[2]
     except IndexError:
-        re_target = 1
-    print(f'n_target:{re_target}')
+        start_day = '2017-01-01'
+        end_day = '2019-01-01'
+    print(start_day, end_day)
+    re_target = 1
     df = pd.read_csv("data/1992_2019_daily_data_with_target.csv", index_col='Dates')
     means = np.load("data/means.npy")
     covs = np.load("data/covs.npy")
-    start_day = "2017-10-29"
-    end_day = "2019-10-29"
+
     train_df, test_df = df[:start_day], df[start_day:end_day]
 
     train_price = train_df[['SPX Index', 'SHCOMP Index', 'SENSEX Index', 'MXLA Index']].to_numpy()
@@ -40,20 +42,18 @@ if __name__ == '__main__':
                                 covs=test_covs, len_period=len_period, re_target=re_target, mode='test')
     model = A2C("MlpPolicy", train_env, verbose=1)
     model.learn(total_timesteps=250000)
-    obs = test_env.reset()
-    while True:
-        action, _states = model.predict(obs)
-        obs, rewards, dones, info = test_env.step(action)
-        if dones:
-            break
-        test_env.render()
-    history = test_env.history
+    del train_env
+    for _ in range(100):
+        obs = test_env.reset()
+        while True:
+            action, _states = model.predict(obs)
+            obs, rewards, dones, info = test_env.step(action)
+            if dones:
+                break
+            # test_env.render()
+        history = test_env.history
 
-    # test_env.save_history(f'a2c_return-{history["Total Return"][-1] * 100:.2f}_' +
-    #                       'sharpe-{util.sharpe_ratio(history["Total Return"]):.4f}_' +
-    #                       'cost-{history["Total Cost"][-1]*100:.2f}%_' +
-    #                       'count-{history["# Rebalance"][-1]}_len-{len_period}.csv')
-
-    with open('results.csv', 'a') as f:
-        f.write(f'a2c_{re_target}, {history["Total Return"][-1] * 100:.2f}, {util.sharpe_ratio(history["Total Return"]):.4f}, ' +
-                f'{history["Total Cost"][-1] * 100:.2f}, {history["# Rebalance"][-1]}, {start_day}, {end_day}\n')
+        with open(f'a2c_results.csv', 'a') as f:
+            f.write(f'a2c, {history["Total Return"][-1] * 100:.2f},' +
+                    f'{util.sharpe_ratio(history["Total Return"]):.4f}, ' +
+                    f'{history["Total Cost"][-1] * 100:.2f}, {history["# Rebalance"][-1]}, {start_day}, {end_day}\n')

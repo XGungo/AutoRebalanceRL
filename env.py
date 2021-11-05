@@ -38,7 +38,7 @@ class AutoRebalanceEnv(gym.Env):
         else:
             self.start_tick = 0
         self.current_tick = self.start_tick
-        self.last_tick = self.current_tick + self.LEN_OF_PERIOD - 1
+        self.last_tick = self.current_tick + self.LEN_OF_PERIOD - 2
         self.target_ratio = self.targets[self.current_tick]
         self.cum_target = np.cumsum(self.target_ratio)[:-1]
 
@@ -57,17 +57,22 @@ class AutoRebalanceEnv(gym.Env):
         # action and observation space
         self.n_actions = self.stock_price.shape[1]
         self.action_space = spaces.Box(low=self.cum_target-.05, high=self.cum_target+.05,
-                                       shape=(self.n_actions-1, ), dtype=np.float32)
-        self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions*2, 1), dtype=np.float32)
-
+                                       shape=(self.n_actions-1, ), dtype=np.float64)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions*2, 1), dtype=np.float64)
 
     def step(self, action: np.ndarray):
+        self.n_step += 1
+        self.update_target()
+        # extract action
         next_state = np.linspace(0, 1, self.n_actions+1)
         next_state[1:-1] = action
         action = np.diff(next_state) - self.current_weight
+
+        # determine whether to move to new stage
         if np.sum(np.abs(action)) >= .01:
             self.n_rebalance += 1
             self._apply_action(action)
+
         self.current_tick += 1
         self.done = self.current_tick == self.last_tick
 
@@ -77,14 +82,12 @@ class AutoRebalanceEnv(gym.Env):
             self.current_return = self.current_weight @ (self.daily_growth[self.current_tick - 1] + 1)
             self.growth_rate *= self.current_return
             self._update_current_weight()
-
-        self.n_step += 1
-        self.update_target()
-
         utility_error = self._get_trace_error()
+
         observation = np.array([self.current_weight, self.target_ratio]).reshape(-1, 1)
         trace_error = np.sum(np.abs(observation))
-        reward = - (utility_error + trading_cost) + self.current_return
+
+        reward = - (utility_error*1.5 + trading_cost) + self.current_return
 
         self.total_cost += trading_cost
         self.total_error += trace_error
@@ -106,7 +109,6 @@ class AutoRebalanceEnv(gym.Env):
             'Reward': reward,
         }
         self._update_history(info)
-        # self.action_space.update(self.current_weight)
         return observation, reward, self.done, info
 
     def reset(self):
@@ -119,7 +121,7 @@ class AutoRebalanceEnv(gym.Env):
         else:
             self.start_tick = 0
         self.current_tick = self.start_tick
-        self.last_tick = self.current_tick + self.LEN_OF_PERIOD - 1
+        self.last_tick = self.current_tick + self.LEN_OF_PERIOD - 2
         self.update_target()
         self.current_weight = self.target_ratio
         self.current_return = 1.
