@@ -1,5 +1,5 @@
 .idea
-*.csv
+*results.csv
 *.png
 data
 raw data
