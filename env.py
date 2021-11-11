@@ -1,8 +1,9 @@
 import gym
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 from gym import spaces
-import numpy as np
-import matplotlib.pyplot as plt
+
 import util
 
 
@@ -10,7 +11,8 @@ class AutoRebalanceEnv(gym.Env):
     """Custom Environment that follows gym interface"""
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, stock_price: pd.DataFrame, targets, means, covs, re_target, alpha=1, len_period: int = 500, mode='train', start_tick=0):
+    def __init__(self, stock_price: pd.DataFrame, targets, means, covs, re_target, alpha=1, len_period: int = 500,
+                 mode='train', start_tick=0):
         super(AutoRebalanceEnv, self).__init__()
 
         # constant
@@ -56,15 +58,15 @@ class AutoRebalanceEnv(gym.Env):
 
         # action and observation space
         self.n_actions = self.stock_price.shape[1]
-        self.action_space = spaces.Box(low=self.cum_target-.05, high=self.cum_target+.05,
-                                       shape=(self.n_actions-1, ), dtype=np.float64)
-        self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions*2, 1), dtype=np.float64)
+        self.action_space = spaces.Box(low=self.cum_target - .05, high=self.cum_target + .05,
+                                       shape=(self.n_actions - 1,), dtype=np.float64)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions * 2, 1), dtype=np.float64)
 
     def step(self, action: np.ndarray):
         self.n_step += 1
         self.update_target()
         # extract action
-        next_state = np.linspace(0, 1, self.n_actions+1)
+        next_state = np.linspace(0, 1, self.n_actions + 1)
         next_state[1:-1] = action
         action = np.diff(next_state) - self.current_weight
 
@@ -87,7 +89,7 @@ class AutoRebalanceEnv(gym.Env):
         observation = np.array([self.current_weight, self.target_ratio]).reshape(-1, 1)
         trace_error = np.sum(np.abs(observation))
 
-        reward = - (utility_error*1.5 + trading_cost) + self.current_return
+        reward = - (utility_error + trading_cost) + self.current_return
 
         self.total_cost += trading_cost
         self.total_error += trace_error
@@ -171,13 +173,12 @@ class AutoRebalanceEnv(gym.Env):
         tc *= self.growth_rate
         return tc
 
-
     def update_target(self):
         if self.n_step % self.re_target == 0:
             self.target_ratio = self.targets[self.current_tick]
             self.cum_target = np.cumsum(self.target_ratio)[:-1]
-            self.action_space = spaces.Box(low=self.cum_target-.05, high=self.cum_target+.05,
-                                           shape=(self.n_actions-1, ), dtype=np.float32)
+            self.action_space = spaces.Box(low=self.cum_target - .05, high=self.cum_target + .05,
+                                           shape=(self.n_actions - 1,), dtype=np.float32)
 
     def utility(self, weights):
         self.mu = self.means[self.current_tick]
@@ -201,7 +202,8 @@ class AutoRebalanceEnv(gym.Env):
 
 if __name__ == '__main__':
 
-    df = pd.read_csv('raw data/2000_2019_daily_data.csv')[['H0A0 Index', 'NKY Index', 'SENSEX Index', 'SPX Index']].to_numpy()
+    df = pd.read_csv('raw data/2000_2019_daily_data.csv')[
+        ['H0A0 Index', 'NKY Index', 'SENSEX Index', 'SPX Index']].to_numpy()
     env = AutoRebalanceEnv(stock_price=df, target_ratio=np.array([.13, .14, .17, .56]))
     observation = env.reset()
 
@@ -213,4 +215,3 @@ if __name__ == '__main__':
         if done:
             observation = env.reset()
     env.close()
-
