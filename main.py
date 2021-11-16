@@ -6,14 +6,35 @@ import numpy as np
 import pandas as pd
 # Press ⌃R to execute it or replace it with your code.
 # Press Double ⇧ to search everywhere for classes, files, tool windows, actions, and settings.
-from stable_baselines3 import A2C
-
+from stable_baselines3 import A2C, PPO
+from stable_baselines3.common.callbacks import BaseCallback
 import util
 from env import AutoRebalanceEnv
 
 # gym.logger.set_level(40)
 
 # Press the green button in the gutter to run the script.
+
+log_dir = "./a2c_auto_rebalance/"
+class TensorboardCallback(BaseCallback):
+    """
+    Custom callback for plotting additional values in tensorboard.
+    """
+
+    def __init__(self, verbose=0):
+        super(TensorboardCallback, self).__init__(verbose)
+
+    def _on_step(self) -> bool:
+        # Log scalar value (here a random variable)
+
+        return True
+    def _on_rollout_end(self) -> None:
+        value = self.training_env.get_attr("growth_rate")[0]
+        cost = self.training_env.get_attr("total_cost")[0]
+        self.logger.record('Return', value)
+        self.logger.record('Cost', cost)
+        self.logger.record('Net Return', value - cost)
+
 if __name__ == '__main__':
     try:
         start_day = sys.argv[1]
@@ -22,7 +43,7 @@ if __name__ == '__main__':
         start_day = '2017-01-01'
         end_day = '2019-01-01'
     print(start_day, end_day)
-    re_target = 1
+    re_target = 50
     df = pd.read_csv("data/1992_2019_daily_data_with_target.csv", index_col='Dates')
     means = np.load("data/means.npy")
     covs = np.load("data/covs.npy")
@@ -41,8 +62,8 @@ if __name__ == '__main__':
                                  covs=train_covs, len_period=len_period, re_target=re_target)
     test_env = AutoRebalanceEnv(alpha=3.35, stock_price=test_price, targets=test_targets, means=test_means,
                                 covs=test_covs, len_period=len_period, re_target=re_target, mode='test')
-    model = A2C("MlpPolicy", train_env, verbose=1)
-    model.learn(total_timesteps=250000)
+    model = A2C("MlpPolicy", train_env, verbose=1,  tensorboard_log=log_dir)
+    model.learn(total_timesteps=80000, callback=TensorboardCallback(), tb_log_name=f"{start_day}-{end_day}")
     del train_env
     for _ in range(100):
         obs = test_env.reset()

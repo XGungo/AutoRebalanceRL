@@ -2,7 +2,7 @@ import sys
 
 import numpy as np
 import pandas as pd
-
+import scipy as sp
 
 def daily_growth(daily_stock_price, mode='monthly'):
     diff = np.diff(daily_stock_price, axis=0)
@@ -89,6 +89,50 @@ def sharpe_ratio(growth):
     for i, g in enumerate(growth[:-1]):
         daily_growth.append(growth[i + 1] / g - 1)
     return np.mean(daily_growth) / np.std(daily_growth)
+
+def save_target():
+    df = pd.read_csv("data/1990_2019_daily_data.csv", index_col='Dates')
+    df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
+    alpha = 1
+    targets = []
+
+    def utility(weights):
+        return -weights.T @ mean + 0.5 * alpha * weights.T @ cov @ weights
+
+    for idx, tick in enumerate(df.iloc[500:].iterrows()):
+        past500 = df.iloc[idx:idx + 500].to_numpy()
+        growth = daily_growth(past500)
+        mean = np.mean(growth, axis=0) * 256
+        cov = np.cov(growth.T) * 256
+        x0 = np.ones(4) / 4
+        cons = ({'type': 'eq', 'fun': lambda x: x.sum() - 1.0})
+        bnds = [(0, 1)] * 4
+        target_ratio = sp.optimize.minimize(utility, x0, method='SLSQP', bounds=bnds, constraints=cons)['x']
+        targets.append(target_ratio)
+
+
+    targets = np.array(targets)
+    new_df = df.iloc[500:]
+    new_df[['tg1', 'tg2', 'tg3', 'tg4']] = targets
+    new_df.to_csv("data/1992_2019_daily_data_with_target.csv")
+
+def save_mean_cov():
+    df = pd.read_csv("data/1992_2019_daily_data_with_target.csv")
+    targets = df[['tg1', 'tg2', 'tg3', 'tg4']].to_numpy()
+    covs = []
+    means = []
+    for idx, tick in enumerate(df.iloc[500:].iterrows()):
+        past500 = df.iloc[idx:idx + 500].to_numpy()
+        growth = daily_growth(past500)
+        mean = np.mean(growth, axis=0) * 256
+        cov = np.cov(growth.T) * 256
+        covs.append(cov)
+        means.append(mean)
+    means = np.array(means)
+    covs = np.array(covs)
+    np.save('data/means.npy', means)
+    np.save('data/cov.npy', covs)
 
 
 if __name__ == '__main__':
