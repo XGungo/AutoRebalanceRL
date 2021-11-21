@@ -58,20 +58,21 @@ class AutoRebalanceEnv(gym.Env):
 
         # action and observation space
         self.n_actions = self.stock_price.shape[1]
-        # self.action_space = spaces.Box(low=self.cum_target - .05, high=self.cum_target + .05,
-        #                                shape=(self.n_actions - 1,), dtype=np.float64)
-        self.action_space = spaces.Box(low=0.01, high=1, shape=(self.n_actions, ), dtype=np.float64)
-        self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions * 3+1, 1), dtype=np.float64)
+        self.action_space = spaces.Box(low=self.cum_target - .05, high=self.cum_target + .05,
+                                       shape=(self.n_actions - 1,), dtype=np.float64)
+        # self.action_space = spaces.Box(low=0.01, high=1, shape=(self.n_actions, ), dtype=np.float64)
+        # self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions * 3+1, 1), dtype=np.float64)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.n_actions * 2, 1), dtype=np.float64)
 
     def step(self, action: np.ndarray):
         self.n_step += 1
         self.update_target()
         # extract action
-        # next_state = np.linspace(0, 1, self.n_actions + 1)
-        # next_state[1:-1] = action
-        # action = np.diff(next_state) - self.current_weight
-        next_state = action/np.sum(action)
-        action = next_state - self.current_weight
+        next_state = np.linspace(0, 1, self.n_actions + 1)
+        next_state[1:-1] = action
+        action = np.diff(next_state) - self.current_weight
+        # next_state = action/np.sum(action)
+        # action = next_state - self.current_weight
 
         # determine whether to move to new stage
         if np.sum(np.abs(action)) >= .01:
@@ -89,11 +90,13 @@ class AutoRebalanceEnv(gym.Env):
             self._update_current_weight()
         utility_error = self._get_trace_error()
 
-        observation = np.concatenate(
-            [self.stock_price[self.current_tick], self.current_weight, self.target_ratio, [utility_error]]).reshape(-1, 1)
+        # observation = np.concatenate(
+        #     [self.stock_price[self.current_tick]-self.stock_price[self.current_tick-1], self.current_weight, self.target_ratio, [utility_error]]).reshape(-1, 1)
+        observation = np.array([self.current_weight, self.target_ratio]).reshape(-1, 1)
+
         trace_error = np.sum(np.abs(observation))
 
-        reward = - (trading_cost) + 2*(self.current_return-1)
+        reward = - (trading_cost) + (self.current_return-1) + utility_error
         self.total_cost += trading_cost
         self.total_error += trace_error
         self.total_utility_error += utility_error
@@ -137,8 +140,8 @@ class AutoRebalanceEnv(gym.Env):
         self.total_error = 0
         self.total_utility_error = 0
         # self.action_space.reset(state=self.target_ratio)
-        observation = np.concatenate(
-            [self.stock_price[self.current_tick], self.current_weight, self.target_ratio, [0]]).reshape(-1, 1)
+        observation = np.array([self.current_weight, self.target_ratio]).reshape(-1, 1)
+
 
         return observation
 
@@ -181,8 +184,8 @@ class AutoRebalanceEnv(gym.Env):
         if self.n_step % self.re_target == 0:
             self.target_ratio = self.targets[self.current_tick]
             self.cum_target = np.cumsum(self.target_ratio)[:-1]
-            # self.action_space = spaces.Box(low=self.cum_target - .05, high=self.cum_target + .05,
-            #                                shape=(self.n_actions - 1,), dtype=np.float32)
+            self.action_space = spaces.Box(low=self.cum_target - .05, high=self.cum_target + .05,
+                                           shape=(self.n_actions - 1,), dtype=np.float32)
 
     def utility(self, weights):
         self.mu = self.means[self.current_tick]
