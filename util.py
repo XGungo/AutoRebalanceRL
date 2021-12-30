@@ -3,10 +3,12 @@ import sys
 import numpy as np
 import pandas as pd
 import scipy as sp
+from datetime import datetime, timedelta
 
 def daily_growth(daily_stock_price, mode='monthly'):
-    diff = np.diff(daily_stock_price, axis=0)
-    return diff / daily_stock_price[:-1]
+    # diff = np.diff(daily_stock_price, axis=0)
+    # return diff / daily_stock_price[:-1]
+    return daily_stock_price[1:]/daily_stock_price[:-1]
 
 
 def expected_mean_return(daily_stock_price):
@@ -134,6 +136,10 @@ def save_mean_cov():
     np.save('data/means.npy', means)
     np.save('data/cov.npy', covs)
 
+def shift_t(date, t):
+    date = datetime.fromisoformat(date)
+    date -= timedelta(days=t)
+    return date.strftime('%Y-%m-%d')
 
 if __name__ == '__main__':
     try:
